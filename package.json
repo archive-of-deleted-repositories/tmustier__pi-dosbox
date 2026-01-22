@@ -1,0 +1,22 @@
+{
+  "name": "pi-dosbox",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "description": "DOSBox extension for pi - run DOS programs with agent interaction",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/badlogic/pi-dosbox.git"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "dependencies": {
+    "emulators": "^8.3.9"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.30"
+  }
+}
