@@ -276,6 +276,31 @@ function decodeModifiers(modifierField: number): { shift: boolean; ctrl: boolean
 	};
 }
 
+// Map shifted punctuation to base key + shift flag
+const SHIFTED_PUNCT: Record<string, { base: number; shifted: true }> = {
+	"~": { base: 96, shifted: true },   // ` -> ~
+	"!": { base: 49, shifted: true },   // 1 -> !
+	"@": { base: 50, shifted: true },   // 2 -> @
+	"#": { base: 51, shifted: true },   // 3 -> #
+	$: { base: 52, shifted: true },     // 4 -> $
+	"%": { base: 53, shifted: true },   // 5 -> %
+	"^": { base: 54, shifted: true },   // 6 -> ^
+	"&": { base: 55, shifted: true },   // 7 -> &
+	"*": { base: 56, shifted: true },   // 8 -> *
+	"(": { base: 57, shifted: true },   // 9 -> (
+	")": { base: 48, shifted: true },   // 0 -> )
+	_: { base: 45, shifted: true },     // - -> _
+	"+": { base: 61, shifted: true },   // = -> +
+	"{": { base: 91, shifted: true },   // [ -> {
+	"}": { base: 93, shifted: true },   // ] -> }
+	"|": { base: 92, shifted: true },   // \ -> |
+	":": { base: 59, shifted: true },   // ; -> :
+	'"': { base: 39, shifted: true },   // ' -> "
+	"<": { base: 44, shifted: true },   // , -> <
+	">": { base: 46, shifted: true },   // . -> >
+	"?": { base: 47, shifted: true },   // / -> ?
+};
+
 function parseKeyWithModifiers(data: string): ParsedKey | null {
 	if (data.startsWith("\x1b[") && data.endsWith("u")) {
 		const body = data.slice(2, -1);
@@ -285,6 +310,14 @@ function parseKeyWithModifiers(data: string): ParsedKey | null {
 			if (!Number.isNaN(codepoint)) {
 				const modifierField = modifierPart ? parseInt(modifierPart.split(":")[0], 10) : 1;
 				const { shift, alt, ctrl } = decodeModifiers(Number.isNaN(modifierField) ? 1 : modifierField);
+
+				// Check for shifted punctuation first
+				const char = String.fromCharCode(codepoint);
+				const shiftedInfo = SHIFTED_PUNCT[char];
+				if (shiftedInfo) {
+					return { keyCode: shiftedInfo.base, shift: true, ctrl, alt };
+				}
+
 				const keyCode = codepointToJsDosKey(codepoint);
 				if (keyCode !== null) {
 					return { keyCode, shift, ctrl, alt };
@@ -306,7 +339,16 @@ function parseKeyWithModifiers(data: string): ParsedKey | null {
 
 	const keyCode = mapKeyToJsDos(data);
 	if (keyCode === null) return null;
-	const shift = data.length === 1 && data >= "A" && data <= "Z";
+
+	// Check for shifted punctuation or uppercase
+	let shift = false;
+	if (data.length === 1) {
+		if (data >= "A" && data <= "Z") {
+			shift = true;
+		} else if (SHIFTED_PUNCT[data]) {
+			return { keyCode: SHIFTED_PUNCT[data].base, shift: true, ctrl: false, alt: false };
+		}
+	}
 	return { keyCode, shift, ctrl: false, alt: false };
 }
 
@@ -316,9 +358,14 @@ function codepointToJsDosKey(codepoint: number): number | null {
 	if (codepoint === 27) return KBD.esc;
 	if (codepoint === 8 || codepoint === 127) return KBD.backspace;
 	if (codepoint === 32) return KBD.space;
-	if (codepoint >= 97 && codepoint <= 122) return codepoint - 32;
-	if (codepoint >= 65 && codepoint <= 90) return codepoint;
-	if (codepoint >= 48 && codepoint <= 57) return codepoint;
+	if (codepoint >= 97 && codepoint <= 122) return codepoint - 32; // a-z -> A-Z keycodes
+	if (codepoint >= 65 && codepoint <= 90) return codepoint; // A-Z
+	if (codepoint >= 48 && codepoint <= 57) return codepoint; // 0-9
+	// Punctuation - use ASCII codepoints directly as keycodes
+	if (codepoint >= 33 && codepoint <= 47) return codepoint;  // ! " # $ % & ' ( ) * + , - . /
+	if (codepoint >= 58 && codepoint <= 64) return codepoint;  // : ; < = > ? @
+	if (codepoint >= 91 && codepoint <= 96) return codepoint;  // [ \ ] ^ _ `
+	if (codepoint >= 123 && codepoint <= 126) return codepoint; // { | } ~
 	return null;
 }
 
@@ -420,6 +467,11 @@ function mapKeyToJsDos(data: string): number | null {
 		if (data >= "a" && data <= "z") return code - 32;
 		if (data >= "A" && data <= "Z") return code;
 		if (data >= "0" && data <= "9") return code;
+		// Punctuation - pass through ASCII codes
+		if (code >= 33 && code <= 47) return code;  // ! " # $ % & ' ( ) * + , - . /
+		if (code >= 58 && code <= 64) return code;  // : ; < = > ? @
+		if (code >= 91 && code <= 96) return code;  // [ \ ] ^ _ `
+		if (code >= 123 && code <= 126) return code; // { | } ~
 	}
 	return null;
 }
