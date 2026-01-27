@@ -114,6 +114,7 @@ export class DosboxComponent implements Component {
 	private updateFrame(rgba: Uint8Array, width: number, height: number): void {
 		const png = this.encodePng(width, height, rgba);
 		const base64 = png.toString("base64");
+
 		this.image = new Image(
 			base64,
 			"image/png",
@@ -213,6 +214,14 @@ export class DosboxComponent implements Component {
 		}
 
 		const imageLines = this.image.render(width);
+
+		// Mark first line with version so TUI re-renders from the top.
+		// This ensures the cursor-up sequence in the image works correctly.
+		// Using zero-width APC sequence that terminals ignore.
+		if (imageLines.length > 1 && imageLines[0] === "") {
+			imageLines[0] = `\x1b_f${this.version}\x07`;
+		}
+
 		const footer = truncateToWidth("\x1b[2mCtrl+Q to detach (DOSBox keeps running)\x1b[22m", width);
 		const lines = [...imageLines, footer];
 
