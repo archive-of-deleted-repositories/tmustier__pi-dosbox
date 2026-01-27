@@ -10,6 +10,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { deflateSync } from "node:zlib";
 import type { CommandInterface, Emulators } from "emulators";
+import { mapPrintableChar, withModifiers, type KeyMapping } from "./key-mapping.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -228,17 +229,16 @@ export class DosboxInstance {
 		if (!this.ci) return;
 
 		for (const key of keys) {
-			const keyCode = this.charToKeyCode(key);
-			if (keyCode !== null) {
-				const needsShift = this.needsShift(key);
-				if (needsShift) {
-					this.ci.sendKeyEvent(KBD.leftshift, true);
-				}
-				this.ci.sendKeyEvent(keyCode, true);
-				this.ci.sendKeyEvent(keyCode, false);
-				if (needsShift) {
-					this.ci.sendKeyEvent(KBD.leftshift, false);
-				}
+			const mapping = this.charToKeyMapping(key);
+			if (!mapping) continue;
+
+			if (mapping.shift) {
+				this.ci.sendKeyEvent(KBD.leftshift, true);
+			}
+			this.ci.sendKeyEvent(mapping.keyCode, true);
+			this.ci.sendKeyEvent(mapping.keyCode, false);
+			if (mapping.shift) {
+				this.ci.sendKeyEvent(KBD.leftshift, false);
 			}
 		}
 	}
@@ -334,50 +334,10 @@ export class DosboxInstance {
 		return (crc ^ 0xffffffff) >>> 0;
 	}
 
-	private charToKeyCode(char: string): number | null {
-		const lower = char.toLowerCase();
-		if (lower >= "a" && lower <= "z") {
-			return lower.charCodeAt(0) - 32; // A-Z = 65-90
-		}
-		if (char >= "0" && char <= "9") {
-			return char.charCodeAt(0); // 0-9 = 48-57
-		}
-		if (char === " ") return KBD.space;
-		if (char === "\n" || char === "\r") return KBD.enter;
-		if (char === "\t") return KBD.tab;
-		// Common punctuation
-		const punct: Record<string, number> = {
-			".": 46,
-			",": 44,
-			";": 59,
-			":": 59, // shift
-			"'": 39,
-			'"': 39, // shift
-			"-": 45,
-			_: 45, // shift
-			"=": 61,
-			"+": 61, // shift
-			"[": 91,
-			"]": 93,
-			"\\": 92,
-			"/": 47,
-			"!": 49, // shift+1
-			"@": 50, // shift+2
-			"#": 51, // shift+3
-			$: 52, // shift+4
-			"%": 53, // shift+5
-			"^": 54, // shift+6
-			"&": 55, // shift+7
-			"*": 56, // shift+8
-			"(": 57, // shift+9
-			")": 48, // shift+0
-		};
-		return punct[char] ?? null;
-	}
-
-	private needsShift(char: string): boolean {
-		if (char >= "A" && char <= "Z") return true;
-		return '~!@#$%^&*()_+{}|:"<>?'.includes(char);
+	private charToKeyMapping(char: string): KeyMapping | null {
+		if (char === "\n" || char === "\r") return withModifiers(KBD.enter);
+		if (char === "\t") return withModifiers(KBD.tab);
+		return mapPrintableChar(char);
 	}
 
 	async dispose(): Promise<void> {

@@ -17,6 +17,7 @@ import {
 	truncateToWidth,
 } from "@mariozechner/pi-tui";
 import { DosboxInstance } from "./dosbox-instance.js";
+import { mapPrintableChar, withModifiers, type KeyMapping, type Modifiers } from "./key-mapping.js";
 
 const MAX_WIDTH_CELLS = 120;
 
@@ -260,14 +261,7 @@ function createCrcTable(): Uint32Array {
 	return table;
 }
 
-interface ParsedKey {
-	keyCode: number;
-	shift: boolean;
-	ctrl: boolean;
-	alt: boolean;
-}
-
-function decodeModifiers(modifierField: number): { shift: boolean; ctrl: boolean; alt: boolean } {
+function decodeModifiers(modifierField: number): Modifiers {
 	const modifiers = modifierField - 1;
 	return {
 		shift: (modifiers & 1) !== 0,
@@ -276,32 +270,7 @@ function decodeModifiers(modifierField: number): { shift: boolean; ctrl: boolean
 	};
 }
 
-// Map shifted punctuation to base key + shift flag
-const SHIFTED_PUNCT: Record<string, { base: number; shifted: true }> = {
-	"~": { base: 96, shifted: true },   // ` -> ~
-	"!": { base: 49, shifted: true },   // 1 -> !
-	"@": { base: 50, shifted: true },   // 2 -> @
-	"#": { base: 51, shifted: true },   // 3 -> #
-	$: { base: 52, shifted: true },     // 4 -> $
-	"%": { base: 53, shifted: true },   // 5 -> %
-	"^": { base: 54, shifted: true },   // 6 -> ^
-	"&": { base: 55, shifted: true },   // 7 -> &
-	"*": { base: 56, shifted: true },   // 8 -> *
-	"(": { base: 57, shifted: true },   // 9 -> (
-	")": { base: 48, shifted: true },   // 0 -> )
-	_: { base: 45, shifted: true },     // - -> _
-	"+": { base: 61, shifted: true },   // = -> +
-	"{": { base: 91, shifted: true },   // [ -> {
-	"}": { base: 93, shifted: true },   // ] -> }
-	"|": { base: 92, shifted: true },   // \ -> |
-	":": { base: 59, shifted: true },   // ; -> :
-	'"': { base: 39, shifted: true },   // ' -> "
-	"<": { base: 44, shifted: true },   // , -> <
-	">": { base: 46, shifted: true },   // . -> >
-	"?": { base: 47, shifted: true },   // / -> ?
-};
-
-function parseKeyWithModifiers(data: string): ParsedKey | null {
+function parseKeyWithModifiers(data: string): KeyMapping | null {
 	if (data.startsWith("\x1b[") && data.endsWith("u")) {
 		const body = data.slice(2, -1);
 		const [keyPart, modifierPart] = body.split(";");
@@ -309,18 +278,17 @@ function parseKeyWithModifiers(data: string): ParsedKey | null {
 			const codepoint = parseInt(keyPart.split(":")[0], 10);
 			if (!Number.isNaN(codepoint)) {
 				const modifierField = modifierPart ? parseInt(modifierPart.split(":")[0], 10) : 1;
-				const { shift, alt, ctrl } = decodeModifiers(Number.isNaN(modifierField) ? 1 : modifierField);
+				const modifiers = decodeModifiers(Number.isNaN(modifierField) ? 1 : modifierField);
 
-				// Check for shifted punctuation first
 				const char = String.fromCharCode(codepoint);
-				const shiftedInfo = SHIFTED_PUNCT[char];
-				if (shiftedInfo) {
-					return { keyCode: shiftedInfo.base, shift: true, ctrl, alt };
+				const printable = mapPrintableChar(char, modifiers);
+				if (printable) {
+					return printable;
 				}
 
 				const keyCode = codepointToJsDosKey(codepoint);
 				if (keyCode !== null) {
-					return { keyCode, shift, ctrl, alt };
+					return withModifiers(keyCode, modifiers);
 				}
 			}
 		}
@@ -331,25 +299,13 @@ function parseKeyWithModifiers(data: string): ParsedKey | null {
 		const code = parseInt(csiMatch[1], 10);
 		const modifierField = parseInt(csiMatch[2], 10);
 		const suffix = csiMatch[3];
-		const { shift, alt, ctrl } = decodeModifiers(modifierField);
+		const modifiers = decodeModifiers(modifierField);
 		const keyCode = mapCsiKeyToJsDos(code, suffix);
 		if (keyCode === null) return null;
-		return { keyCode, shift, ctrl, alt };
+		return withModifiers(keyCode, modifiers);
 	}
 
-	const keyCode = mapKeyToJsDos(data);
-	if (keyCode === null) return null;
-
-	// Check for shifted punctuation or uppercase
-	let shift = false;
-	if (data.length === 1) {
-		if (data >= "A" && data <= "Z") {
-			shift = true;
-		} else if (SHIFTED_PUNCT[data]) {
-			return { keyCode: SHIFTED_PUNCT[data].base, shift: true, ctrl: false, alt: false };
-		}
-	}
-	return { keyCode, shift, ctrl: false, alt: false };
+	return mapKeyToJsDos(data);
 }
 
 function codepointToJsDosKey(codepoint: number): number | null {
@@ -357,15 +313,6 @@ function codepointToJsDosKey(codepoint: number): number | null {
 	if (codepoint === 9) return KBD.tab;
 	if (codepoint === 27) return KBD.esc;
 	if (codepoint === 8 || codepoint === 127) return KBD.backspace;
-	if (codepoint === 32) return KBD.space;
-	if (codepoint >= 97 && codepoint <= 122) return codepoint - 32; // a-z -> A-Z keycodes
-	if (codepoint >= 65 && codepoint <= 90) return codepoint; // A-Z
-	if (codepoint >= 48 && codepoint <= 57) return codepoint; // 0-9
-	// Punctuation - use ASCII codepoints directly as keycodes
-	if (codepoint >= 33 && codepoint <= 47) return codepoint;  // ! " # $ % & ' ( ) * + , - . /
-	if (codepoint >= 58 && codepoint <= 64) return codepoint;  // : ; < = > ? @
-	if (codepoint >= 91 && codepoint <= 96) return codepoint;  // [ \ ] ^ _ `
-	if (codepoint >= 123 && codepoint <= 126) return codepoint; // { | } ~
 	return null;
 }
 
@@ -433,45 +380,40 @@ function mapCsiKeyToJsDos(code: number, suffix: string): number | null {
 	}
 }
 
-function mapKeyToJsDos(data: string): number | null {
-	if (matchesKey(data, Key.enter)) return KBD.enter;
-	if (matchesKey(data, Key.backspace)) return KBD.backspace;
-	if (matchesKey(data, Key.tab)) return KBD.tab;
-	if (matchesKey(data, Key.escape)) return KBD.esc;
-	if (matchesKey(data, Key.space)) return KBD.space;
-	if (matchesKey(data, Key.up)) return KBD.up;
-	if (matchesKey(data, Key.down)) return KBD.down;
-	if (matchesKey(data, Key.left)) return KBD.left;
-	if (matchesKey(data, Key.right)) return KBD.right;
-	if (matchesKey(data, Key.pageUp)) return KBD.pageup;
-	if (matchesKey(data, Key.pageDown)) return KBD.pagedown;
-	if (matchesKey(data, Key.home)) return KBD.home;
-	if (matchesKey(data, Key.end)) return KBD.end;
-	if (matchesKey(data, Key.insert)) return KBD.insert;
-	if (matchesKey(data, Key.delete)) return KBD.delete;
-	if (matchesKey(data, Key.f1)) return KBD.f1;
-	if (matchesKey(data, Key.f2)) return KBD.f2;
-	if (matchesKey(data, Key.f3)) return KBD.f3;
-	if (matchesKey(data, Key.f4)) return KBD.f4;
-	if (matchesKey(data, Key.f5)) return KBD.f5;
-	if (matchesKey(data, Key.f6)) return KBD.f6;
-	if (matchesKey(data, Key.f7)) return KBD.f7;
-	if (matchesKey(data, Key.f8)) return KBD.f8;
-	if (matchesKey(data, Key.f9)) return KBD.f9;
-	if (matchesKey(data, Key.f10)) return KBD.f10;
-	if (matchesKey(data, Key.f11)) return KBD.f11;
-	if (matchesKey(data, Key.f12)) return KBD.f12;
+const NO_SHIFT_KEYS: Array<[Parameters<typeof matchesKey>[1], number]> = [
+	[Key.enter, KBD.enter],
+	[Key.backspace, KBD.backspace],
+	[Key.tab, KBD.tab],
+	[Key.escape, KBD.esc],
+	[Key.space, KBD.space],
+	[Key.up, KBD.up],
+	[Key.down, KBD.down],
+	[Key.left, KBD.left],
+	[Key.right, KBD.right],
+	[Key.pageUp, KBD.pageup],
+	[Key.pageDown, KBD.pagedown],
+	[Key.home, KBD.home],
+	[Key.end, KBD.end],
+	[Key.insert, KBD.insert],
+	[Key.delete, KBD.delete],
+	[Key.f1, KBD.f1],
+	[Key.f2, KBD.f2],
+	[Key.f3, KBD.f3],
+	[Key.f4, KBD.f4],
+	[Key.f5, KBD.f5],
+	[Key.f6, KBD.f6],
+	[Key.f7, KBD.f7],
+	[Key.f8, KBD.f8],
+	[Key.f9, KBD.f9],
+	[Key.f10, KBD.f10],
+	[Key.f11, KBD.f11],
+	[Key.f12, KBD.f12],
+];
 
-	if (data.length === 1) {
-		const code = data.charCodeAt(0);
-		if (data >= "a" && data <= "z") return code - 32;
-		if (data >= "A" && data <= "Z") return code;
-		if (data >= "0" && data <= "9") return code;
-		// Punctuation - pass through ASCII codes
-		if (code >= 33 && code <= 47) return code;  // ! " # $ % & ' ( ) * + , - . /
-		if (code >= 58 && code <= 64) return code;  // : ; < = > ? @
-		if (code >= 91 && code <= 96) return code;  // [ \ ] ^ _ `
-		if (code >= 123 && code <= 126) return code; // { | } ~
+function mapKeyToJsDos(data: string): KeyMapping | null {
+	for (const [key, keyCode] of NO_SHIFT_KEYS) {
+		if (matchesKey(data, key)) return withModifiers(keyCode);
 	}
-	return null;
+
+	return mapPrintableChar(data);
 }
